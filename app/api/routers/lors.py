@@ -59,6 +59,7 @@ def generate_and_send_lor(
     )
 
     # Send for e-signature if email available
+    dropbox_error = None
     if lead.email:
         try:
             sig_data = send_lor_for_signature(
@@ -74,7 +75,8 @@ def generate_and_send_lor(
             lor.sent_at = datetime.utcnow()
             lor.email_sent = True
         except Exception as e:
-            logger.error(f"Dropbox Sign failed for lead {lead_id}: {e}")
+            dropbox_error = str(e)
+            logger.error(f"Dropbox Sign failed for lead {lead_id}: {e}", exc_info=True)
 
     session.add(lor)
     session.commit()
@@ -107,6 +109,7 @@ def generate_and_send_lor(
         "signing_url": lor.signing_url,
         "sms_sent": lor.sms_sent,
         "email_sent": lor.email_sent,
+        "dropbox_error": dropbox_error,
     }
 
 
