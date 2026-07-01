@@ -186,24 +186,27 @@ def process_call_intake(
         if not call:
             return
 
+        # 1. Find or create lead by phone (always create, even if AI steps fail)
+        lead = db.exec(
+            select(Lead).where(Lead.phone == phone_number)
+        ).first()
+        if not lead:
+            lead = Lead(phone=phone_number)
+        lead.source = "inbound_call"
+        lead.updated_at = datetime.utcnow()
+
         try:
-            # 1. Extract structured data from transcript
+            # 2. Extract structured data from transcript
             extracted = extract_intake_from_transcript(transcript)
             call.extracted_data = json.dumps(extracted)
             call.intake_completed = True
-
-            # 2. Find or create lead by phone
-            lead = db.exec(
-                select(Lead).where(Lead.phone == phone_number)
-            ).first()
-
-            if not lead:
-                lead = Lead(phone=phone_number)
-
-            # 3. Populate lead from extracted data
             _apply_extracted_to_lead(lead, extracted)
+        except Exception as e:
+            logger.error(f"AI extraction failed for {vapi_call_id}: {e}", exc_info=True)
+            extracted = {}
 
-            # 4. Score the lead
+        try:
+            # 3. Score the lead
             scoring = score_lead(extracted)
             scoring = ai_enhance_score(extracted, scoring, transcript)
             lead.score = scoring["score"]
@@ -211,16 +214,6 @@ def process_call_intake(
             lead.priority = scoring["priority"]
             lead.disqualification_reason = scoring["disqualification_reason"]
 
-            # 5. Estimate settlement
-            settlement = ai_estimate_settlement(extracted)
-            lead.estimated_settlement_min = settlement["estimated_settlement_min"]
-            lead.estimated_settlement_max = settlement["estimated_settlement_max"]
-            lead.settlement_notes = settlement["settlement_notes"]
-
-            # 6. Generate AI summary
-            lead.ai_summary = generate_case_summary(extracted, transcript)
-
-            # 7. Set status
             if scoring["priority"] == "disqualified":
                 lead.status = LeadStatus.DISQUALIFIED
             elif scoring["priority"] == "hot":
@@ -229,29 +222,44 @@ def process_call_intake(
                 lead.status = LeadStatus.WARM
             else:
                 lead.status = LeadStatus.COLD
+        except Exception as e:
+            logger.error(f"Lead scoring failed for {vapi_call_id}: {e}", exc_info=True)
 
-            lead.source = "inbound_call"
-            lead.updated_at = datetime.utcnow()
+        try:
+            # 4. Estimate settlement
+            settlement = ai_estimate_settlement(extracted)
+            lead.estimated_settlement_min = settlement["estimated_settlement_min"]
+            lead.estimated_settlement_max = settlement["estimated_settlement_max"]
+            lead.settlement_notes = settlement["settlement_notes"]
+        except Exception as e:
+            logger.error(f"Settlement estimation failed for {vapi_call_id}: {e}", exc_info=True)
 
-            db.add(lead)
-            db.commit()
-            db.refresh(lead)
+        try:
+            # 5. Generate AI summary
+            lead.ai_summary = generate_case_summary(extracted, transcript)
+        except Exception as e:
+            logger.error(f"Case summary failed for {vapi_call_id}: {e}", exc_info=True)
 
-            # 8. Link call to lead
-            call.lead_id = lead.id
-            db.add(call)
-            db.commit()
+        # 6. Always save the lead
+        db.add(lead)
+        db.commit()
+        db.refresh(lead)
 
-            # 9. Schedule follow-up sequence (async)
+        # 7. Link call to lead
+        call.lead_id = lead.id
+        db.add(call)
+        db.commit()
+
+        logger.info(
+            f"Intake processed: lead {lead.id}, score={lead.score}, priority={lead.priority}"
+        )
+
+        # 8. Schedule follow-up sequence (optional — requires Celery worker)
+        try:
             if lead.status != LeadStatus.DISQUALIFIED:
                 schedule_follow_up_sequence.delay(lead.id)
-
-            logger.info(
-                f"Intake processed: lead {lead.id}, score={lead.score}, priority={lead.priority}"
-            )
-
         except Exception as e:
-            logger.error(f"Error processing call intake for {vapi_call_id}: {e}", exc_info=True)
+            logger.warning(f"Could not queue follow-up sequence for lead {lead.id}: {e}")
 
 
 def _apply_extracted_to_lead(lead: Lead, data: dict):
