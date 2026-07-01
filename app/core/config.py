@@ -1,9 +1,17 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from functools import lru_cache
 
 
 class Settings(BaseSettings):
     DATABASE_URL: str
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def fix_postgres_url(cls, v: str) -> str:
+        if v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql://", 1)
+        return v
     REDIS_URL: str = "redis://localhost:6379/0"
 
     ANTHROPIC_API_KEY: str
