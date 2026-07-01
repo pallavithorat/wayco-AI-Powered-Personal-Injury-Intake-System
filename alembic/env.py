@@ -1,5 +1,6 @@
+import os
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, create_engine
 from sqlmodel import SQLModel
 from alembic import context
 
@@ -15,6 +16,14 @@ if config.config_file_name:
     fileConfig(config.config_file_name)
 
 target_metadata = SQLModel.metadata
+
+# Override sqlalchemy.url with DATABASE_URL env var if present
+database_url = os.environ.get("DATABASE_URL")
+if database_url:
+    # Railway provides postgres:// but SQLAlchemy requires postgresql://
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    config.set_main_option("sqlalchemy.url", database_url)
 
 
 def run_migrations_offline():
