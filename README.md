@@ -1,6 +1,6 @@
-# Wayco — AI-Powered Personal Injury Intake System
+# AI-Powered Personal Injury Intake System
 
-Built for Wayco (YC W26). An end-to-end voice AI intake pipeline for personal injury law firms — from inbound phone call to signed retainer agreement, fully automated.
+An end-to-end voice AI intake pipeline for personal injury law firms — from inbound phone call to signed retainer agreement, fully automated.
 
 ---
 
